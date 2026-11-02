@@ -487,6 +487,10 @@ Environment="CLAUDE_RC_UNIT=${UNIT_PREFIX}"
 ExecStart=/bin/bash "${SCRIPT_PATH}" run "${workDir}"
 Restart=always
 RestartSec=30
+# Server bez terminalu prekresluje stavovy radek ~1x za sekundu (4 radky v journalu) a vytlacil by
+# ostatni logy; start, URL a prvni chyby se do limitu vejdou, zbytek journald zahodi s poctem
+LogRateLimitIntervalSec=10min
+LogRateLimitBurst=100
 
 [Install]
 WantedBy=multi-user.target

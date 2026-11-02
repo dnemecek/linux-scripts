@@ -109,6 +109,9 @@ a `claude-rc.sh restart`.
   `stop`, `uninstall` a `status` fungují i pro smazanou složku serveru.
 - Když server po `install` nebo `start` neběží stabilně, skript ukáže posledních 5 řádků
   journalu a jednotku zastaví a zakáže (jinak by ji `Restart=always` spouštěl dokola).
+- Server bez terminálu překresluje stavový řádek zhruba jednou za sekundu. Jednotka proto omezuje
+  log na 100 řádků za 10 minut (`LogRateLimitIntervalSec`, `LogRateLimitBurst`); start, URL
+  a první chyby se vejdou, zbytek journald zahodí a zapíše počet zahozených zpráv.
 - PATH služby = adresář `claude` + PATH login shellu uživatele služby + systémové cesty;
   po změně nástrojů (např. nvm) zopakovat `install`.
 
