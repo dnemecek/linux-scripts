@@ -106,9 +106,11 @@ require_root() {
 #            cte se po radcich: povolene klice serverDir, hostName, unitPrefix, serviceUser;
 #            prazdne radky a komentare se preskoci. Komentar zacina # na zacatku radku nebo za
 #            mezerou, takze # uvnitr hodnoty (napr. cesta /srv/a#b) zustane soucasti hodnoty.
+#            Komentar se odrizne pred zpracovanim uvozovek: ani v uvozovkach nejde zapsat " #"
+#            (z "/srv/my #x" zbyde "/srv/my a hlasi se nesparovana uvozovka).
 #            Uvozovky kolem hodnoty se odstrani jen sparovane; osamela uvozovka je preklep a chyba,
 #            jinak by se tise nacetla jina hodnota.
-#            ~ a $HOME na zacatku hodnoty rozvine az apply_settings, protoze pod sudo neni
+#            ~, ~/cesta, $HOME a $HOME/cesta (ne ~uzivatel, ne $HOMEX) rozvine az apply_settings, protoze pod sudo neni
 #            $HOME domovem uzivatele sluzby. Neznamy klic nebo spatny radek = chyba.
 # Kontrola: Navratovy kod 0 a nastavene cfg*; jinak exit 1 s cislem radku.
 load_config() {
@@ -143,7 +145,7 @@ load_config() {
 #      (prostredi > config > vychozi).
 # Mantinely: SERVICE_USER existujici uzivatel, ne root (UID 0) -- server by bezel s pravy roota
 #            a duvera slozek by patrila rootovi. USER_HOME z passwd (getent), ne z $HOME.
-#            DEFAULT_DIR absolutni cesta (~ a $HOME na zacatku = USER_HOME); HOST_NAME 1-63 znaku
+#            DEFAULT_DIR absolutni cesta (~, ~/..., $HOME a $HOME/... = USER_HOME); HOST_NAME 1-63 znaku
 #            A-Z a-z 0-9 mezera . _ -; UNIT_PREFIX A-Z a-z 0-9 -, protoze je soucasti nazvu jednotky.
 # Kontrola: Neplatna hodnota ukonci skript exit 1 se jmenem klice a zdrojem hodnoty.
 apply_settings() {
@@ -163,8 +165,9 @@ apply_settings() {
         error "serviceUser must not be root. Set serviceUser in $CONFIG_FILE or run via sudo from that user."
         exit 1
     fi
-    userHome="$(getent passwd "$serviceUser" | cut -d: -f6)"
-    # Home "/" se odmita: po odriznuti koncoveho lomitka by USER_HOME byl prazdny
+    # Koncova lomitka pryc hned ("/home/u/" -> "/home/u"), jinak by ~/x dalo "/home/u//x".
+    # Home "/" nebo "//" tak zustane prazdny a odmitne se.
+    userHome="$(getent passwd "$serviceUser" | cut -d: -f6 | sed 's:/*$::')"
     if [[ "$userHome" != /?* ]]; then
         error "Home directory of serviceUser '$serviceUser' not found in passwd or is /."
         exit 1
@@ -189,7 +192,7 @@ apply_settings() {
         error "unitPrefix must be A-Z a-z 0-9 - (no leading/trailing -): '$unitPrefix' (config or CLAUDE_RC_UNIT)"
         exit 1
     fi
-    readonly SERVICE_USER="$serviceUser" USER_HOME="${userHome%/}" DEFAULT_DIR="$serverDir"
+    readonly SERVICE_USER="$serviceUser" USER_HOME="$userHome" DEFAULT_DIR="$serverDir"
     readonly HOST_NAME="$hostName" UNIT_PREFIX="$unitPrefix"
 }
 
@@ -275,7 +278,9 @@ check_owner() {
     local owner
     [[ -f "$unitPath" ]] || return 0
     owner="$(unit_value WorkingDirectory)"
-    if [[ "$owner" != "$workDir" ]]; then
+    # Jednotka muze nest logickou cestu (symlink, starsi instalace); shoda plati i po rozvinuti
+    # na fyzickou cestu, kterou ma workDir (resolve, pwd -P)
+    if [[ "$owner" != "$workDir" && "$(cd "$owner" 2>/dev/null && pwd -P)" != "$workDir" ]]; then
         error "Service $unitName belongs to another server directory: $owner"
         echo "  One service per folder name. Remove it first: sudo $0 uninstall \"$owner\"" >&2
         exit 1
@@ -583,7 +588,11 @@ cmd_uninstall() {
     success "Service $unitName removed (journal kept: journalctl -u $unitName)."
 }
 
-# Cil: Vypise nainstalovane sluzby: jednotku, slozku serveru, stav, PID, restarty a exit status. Jen cte.
+# Cil: Vypise nainstalovane sluzby: jednotku, slozku serveru, stav, PID, restarty a exit status.
+# Mantinely: Jen cte; meni jen globalni unitPath a unitName, ze kterych ctou unit_prop a unit_value.
+#            Jednotku bez Environment="CLAUDE_RC_UNIT=<unitPrefix>" (jiny prefix nebo rucne upravena)
+#            preskoci.
+# Kontrola: Vypis kazde vlastni jednotky, nebo hlaska, ze zadna neni nainstalovana.
 cmd_status() {
     local found=0 dir pid
     for unitPath in "${UNIT_DIR}/${UNIT_PREFIX}"-*.service; do
