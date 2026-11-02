@@ -72,6 +72,9 @@ success() { echo -e "${GREEN}[OK] $1${NC}"; }
 log_line() { echo "[$1] $2"; }
 
 # Cil: Vypise blok Pouziti z hlavicky (od "# Pouziti:" po prvni prazdny komentar) a skonci s kodem 1.
+# Mantinely: Jen cte hlavicku $0. Konec bloku je prvni radek presne "#", proto do bloku Pouziti
+#            nevkladat prazdny komentar.
+# Kontrola: Vzdy exit 1; bez bloku Pouziti v hlavicce nevypise nic.
 usage() {
     sed -n '/^# Pouziti:/,/^#$/{/^#$/d;s/^# //;p;}' "$0"
     exit 1
@@ -101,26 +104,31 @@ require_root() {
 # Cil: Nacte config (klic=hodnota) do promennych cfg*.
 # Mantinely: Config je volitelny; chybejici soubor neni chyba. Soubor se NEspousti (source),
 #            cte se po radcich: povolene klice serverDir, hostName, unitPrefix, serviceUser;
-#            prazdne radky a komentare (#) se preskoci, uvozovky kolem hodnoty se odstrani.
+#            prazdne radky a komentare se preskoci. Komentar zacina # na zacatku radku nebo za
+#            mezerou, takze # uvnitr hodnoty (napr. cesta /srv/a#b) zustane soucasti hodnoty.
+#            Uvozovky kolem hodnoty se odstrani jen sparovane; osamela uvozovka je preklep a chyba,
+#            jinak by se tise nacetla jina hodnota.
 #            ~ a $HOME na zacatku hodnoty rozvine az apply_settings, protoze pod sudo neni
 #            $HOME domovem uzivatele sluzby. Neznamy klic nebo spatny radek = chyba.
 # Kontrola: Navratovy kod 0 a nastavene cfg*; jinak exit 1 s cislem radku.
 load_config() {
-    local line key value lineNo=0 lineRe='^([A-Za-z]+)=(.*)$'
+    local line key value lineNo=0 lineRe='^([A-Za-z]+)=(.*)$' dqRe='^"(.*)"$' sqRe="^'(.*)'$"
     [[ -f "$CONFIG_FILE" ]] || return 0
     while IFS= read -r line || [[ -n "$line" ]]; do
         lineNo=$((lineNo + 1))
-        line="${line%%#*}"
-        line="$(sed 's/^[[:space:]]*//; s/[[:space:]]*$//' <<<"$line")"
-        [[ -z "$line" ]] && continue
+        line="$(sed 's/^[[:space:]]*//; s/[[:space:]]*$//' <<<"${line%%[[:space:]]#*}")"
+        [[ -z "$line" || "$line" == \#* ]] && continue
         if [[ ! "$line" =~ $lineRe ]]; then
             error "Invalid line $lineNo in $CONFIG_FILE (expected key=value)"
             exit 1
         fi
         key="${BASH_REMATCH[1]}"
         value="${BASH_REMATCH[2]}"
-        value="${value#\"}"; value="${value%\"}"
-        value="${value#\'}"; value="${value%\'}"
+        if [[ "$value" =~ $dqRe || "$value" =~ $sqRe ]]; then
+            value="${BASH_REMATCH[1]}"
+        elif [[ "$value" == [\"\']* || "$value" == *[\"\'] ]]; then
+            error "Unmatched quote on line $lineNo in $CONFIG_FILE"; exit 1
+        fi
         case "$key" in
             serverDir)   cfgServerDir="$value" ;;
             hostName)    cfgHostName="$value" ;;
@@ -156,14 +164,16 @@ apply_settings() {
         exit 1
     fi
     userHome="$(getent passwd "$serviceUser" | cut -d: -f6)"
-    if [[ "$userHome" != /* ]]; then
-        error "Home directory of serviceUser '$serviceUser' not found in passwd."
+    # Home "/" se odmita: po odriznuti koncoveho lomitka by USER_HOME byl prazdny
+    if [[ "$userHome" != /?* ]]; then
+        error "Home directory of serviceUser '$serviceUser' not found in passwd or is /."
         exit 1
     fi
     serverDir="${CLAUDE_RC_DIR:-${cfgServerDir:-$userHome/Repos}}"
+    # Jen ~ a ~/... (ne ~jinyuzivatel); jinak by se jmeno spojilo s cestou home bez lomitka
     case "$serverDir" in
-        "~"*)     serverDir="$userHome${serverDir#\~}" ;;
-        '$HOME'*) serverDir="$userHome${serverDir#\$HOME}" ;;
+        "~"|"~/"*)         serverDir="$userHome${serverDir#\~}" ;;
+        '$HOME'|'$HOME/'*) serverDir="$userHome${serverDir#\$HOME}" ;;
     esac
     hostName="${CLAUDE_RC_HOST:-${cfgHostName:-$(hostname -s)}}"
     unitPrefix="${CLAUDE_RC_UNIT:-${cfgUnitPrefix:-claude-rc}}"
@@ -194,7 +204,9 @@ apply_settings() {
 resolve() {
     local dir="${1:-$DEFAULT_DIR}" mode="${2:-}" homeReal workReal
     if [[ -d "$dir" ]]; then
-        workDir="$(cd "$dir" && pwd)"
+        # Fyzicka cesta (pwd -P): tataz slozka zadana pres symlink da stejny WorkingDirectory
+        # a check_owner ji nevezme za cizi
+        workDir="$(cd "$dir" && pwd -P)"
     elif [[ "$mode" == "must_exist" ]]; then
         error "Server directory not found: $dir"
         exit 1
@@ -450,7 +462,6 @@ cmd_install() {
     check_unit_safe "Server directory" "$workDir"
     check_unit_safe "Script path" "$SCRIPT_PATH"
     check_unit_safe "PATH" "$pathEnv"
-    check_unit_safe "Home directory" "$USER_HOME"
     oldPid=$(main_pid)
     (umask 022 && cat >"$unitPath") <<UNIT_END
 [Unit]
@@ -467,7 +478,6 @@ WorkingDirectory=${workDir}
 Environment="PATH=${pathEnv}"
 Environment="CLAUDE_RC_HOST=${HOST_NAME}"
 Environment="CLAUDE_RC_UNIT=${UNIT_PREFIX}"
-Environment="HOME=${USER_HOME}"
 ExecStart=/bin/bash "${SCRIPT_PATH}" run "${workDir}"
 Restart=always
 RestartSec=30
@@ -578,6 +588,9 @@ cmd_status() {
     local found=0 dir pid
     for unitPath in "${UNIT_DIR}/${UNIT_PREFIX}"-*.service; do
         [[ -f "$unitPath" ]] || continue
+        # Glob prefixu "claude" zachyti i jednotky prefixu "claude-rc"; vlastni jednotku pozna
+        # Environment= s timto prefixem, ktery zapisuje cmd_install
+        grep -qFx "Environment=\"CLAUDE_RC_UNIT=${UNIT_PREFIX}\"" "$unitPath" || continue
         found=1
         unitName="$(basename "$unitPath")"
         dir="$(unit_value WorkingDirectory)"
