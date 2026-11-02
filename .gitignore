@@ -1,0 +1,33 @@
+# macOS (vyvoj na Macu)
+.DS_Store
+._*
+
+# Tajnosti -- NIKDY do gitu
+.env
+*.env
+!*.env.example
+*.key
+*.pem
+*.kdbx
+*.sql
+*.dump
+ssl/
+
+# Lokalni / scratch
+local/
+.claude/settings.local.json
+
+# Logy
+*.log
+*.err
+
+# Editor backupy
+*~
+*.bak
+
+# IDE
+.vscode/
+.idea/
+
+# Lokalni config skriptu (vzor: *.conf.example)
+bin/*.conf
