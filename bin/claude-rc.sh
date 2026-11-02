@@ -279,9 +279,10 @@ check_owner() {
     [[ -f "$unitPath" ]] || return 0
     owner="$(unit_value WorkingDirectory)"
     # Jednotka muze nest logickou cestu (symlink, starsi instalace); shoda plati i po rozvinuti
-    # na fyzickou cestu, kterou ma workDir (resolve, pwd -P)
-    if [[ "$owner" != "$workDir" && "$(cd "$owner" 2>/dev/null && pwd -P)" != "$workDir" ]]; then
-        error "Service $unitName belongs to another server directory: $owner"
+    # na fyzickou cestu, kterou ma workDir (resolve, pwd -P). Prazdny owner (jednotka bez
+    # WorkingDirectory=) je vzdy cizi: cd "" je v bash no-op a pwd -P by vratil aktualni adresar.
+    if [[ -z "$owner" || ( "$owner" != "$workDir" && "$(cd "$owner" 2>/dev/null && pwd -P)" != "$workDir" ) ]]; then
+        error "Service $unitName belongs to another server directory: ${owner:-<no WorkingDirectory>}"
         echo "  One service per folder name. Remove it first: sudo $0 uninstall \"$owner\"" >&2
         exit 1
     fi
