@@ -56,6 +56,8 @@ readonly TARGET_PATH="/usr/local/bin/claude-rc.sh"
 readonly SOURCE_URL="${CLAUDE_RC_SOURCE:-https://raw.githubusercontent.com/dnemecek/linux-scripts/main/bin/claude-rc.sh}"
 # Max. delka nazvu jednotky systemd vcetne pripony .service
 readonly UNIT_NAME_MAX=255
+# Platne jmeno uzivatele sluzby (apply_settings; setup pred useradd)
+readonly USER_RE='^[a-z_][a-z0-9_.-]{0,31}$'
 
 readonly RED='\033[1;31m'
 readonly GREEN='\033[0;32m'
@@ -157,9 +159,8 @@ load_config() {
 apply_settings() {
     local serverDir hostName unitPrefix serviceUser userHome uid
     local hostRe='^[A-Za-z0-9._ -]{1,63}$' unitRe='^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?$'
-    local userRe='^[a-z_][a-z0-9_.-]{0,31}$'
     serviceUser="${CLAUDE_RC_USER:-${cfgServiceUser:-${SUDO_USER:-$(id -un)}}}"
-    if [[ ! "$serviceUser" =~ $userRe ]]; then
+    if [[ ! "$serviceUser" =~ $USER_RE ]]; then
         error "serviceUser is not a valid user name: '$serviceUser' (config $CONFIG_FILE or CLAUDE_RC_USER)"
         exit 1
     fi
@@ -477,7 +478,9 @@ cmd_setup() {
     command -v git >/dev/null || dnf -y install git || { error "git installation failed"; exit 1; }
     load_config
     user="${CLAUDE_RC_USER:-${cfgServiceUser:-claude}}"
-    if ! id -u "$user" >/dev/null 2>&1; then
+    if [[ ! "$user" =~ $USER_RE ]]; then
+        error "Not a valid user name: '$user' (CLAUDE_RC_USER or serviceUser)"; exit 1
+    elif ! id -u "$user" >/dev/null 2>&1; then
         useradd -m -s /bin/bash "$user" || { error "useradd $user failed"; exit 1; }
     fi
     # Do configu az po validaci v apply_settings (ne root, platne jmeno), jinak by tam spatna
