@@ -487,10 +487,10 @@ Environment="CLAUDE_RC_UNIT=${UNIT_PREFIX}"
 ExecStart=/bin/bash "${SCRIPT_PATH}" run "${workDir}"
 Restart=always
 RestartSec=30
-# Server bez terminalu prekresluje stavovy radek ~1x za sekundu (4 radky v journalu) a vytlacil by
-# ostatni logy; start, URL a prvni chyby se do limitu vejdou, zbytek journald zahodi s poctem
+# Server bez terminalu prekresluje stavovy radek (~6 radku/s v journalu) a vytlacil by ostatni logy; journald burst
+# nasobi podle volneho mista (1-6x, journald.conf), start, URL a prvni chyby se vejdou, zbytek zahodi s poctem
 LogRateLimitIntervalSec=10min
-LogRateLimitBurst=100
+LogRateLimitBurst=25
 
 [Install]
 WantedBy=multi-user.target
