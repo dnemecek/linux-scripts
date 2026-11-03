@@ -9,7 +9,10 @@
 #
 # Verze: 1.0.0
 #
-# Pouziti:  claude-rc.sh init      [DIR]   prvni spusteni v popredi (jako uzivatel sluzby, ne root):
+# Pouziti:  claude-rc.sh setup             novy server jednim prikazem (root): git, uzivatel sluzby, Claude Code,
+#                                          skript a config v /usr/local/bin, prihlaseni, init a install;
+#                                          i pres: curl -fsSL <SOURCE_URL> | bash -s setup
+#           claude-rc.sh init      [DIR]   prvni spusteni v popredi (jako uzivatel sluzby, ne root):
 #                                          potvrdit duveru slozky a Remote Control
 #           claude-rc.sh install   [DIR]   vytvori, povoli a spusti sluzbu (sudo)
 #           claude-rc.sh start     [DIR]   povoli a spusti nainstalovanou sluzbu (sudo)
@@ -48,6 +51,9 @@ set -o pipefail
 readonly SCRIPT_PATH="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
 readonly CONFIG_FILE="${CLAUDE_RC_CONFIG:-$(dirname "$SCRIPT_PATH")/claude-rc.conf}"
 readonly UNIT_DIR="/etc/systemd/system"
+# Kam setup nasadi skript a odkud ho stahne, kdyz bezi z pipe (curl | bash)
+readonly TARGET_PATH="/usr/local/bin/claude-rc.sh"
+readonly SOURCE_URL="${CLAUDE_RC_SOURCE:-https://raw.githubusercontent.com/dnemecek/linux-scripts/main/bin/claude-rc.sh}"
 # Max. delka nazvu jednotky systemd vcetne pripony .service
 readonly UNIT_NAME_MAX=255
 
@@ -447,6 +453,52 @@ cmd_run() {
     exec claude remote-control --name "${HOST_NAME} - ${baseName}" --remote-control-session-name-prefix "$HOST_NAME"
 }
 
+# Cil: Pripravi novy server a nainstaluje sluzbu jednim prikazem: git, uzivatel sluzby se slozkou
+#      serveru, Claude Code, skript a config v /usr/local/bin, prihlaseni, init a install.
+# Mantinely: Root, Rocky Linux (dnf). Hotove kroky preskoci, takze opakovane spusteni jen aktualizuje
+#            skript a sluzbu. Z pipe (curl | bash) neni skript souborem a stdin je pipe: nejdriv se
+#            nasadi do TARGET_PATH a spusti znovu se vstupem z terminalu, protoze prihlaseni a init
+#            cekaji na odpovedi. Uzivatel sluzby CLAUDE_RC_USER, jinak serviceUser z configu, jinak
+#            claude. Ctrl+C po initu ukonci jen server (trap), setup pokracuje instalaci sluzby.
+# Kontrola: cmd_install (check_running) a vypis status; jinak exit 1 u kroku, ktery selhal.
+cmd_setup() {
+    local user
+    require_root setup
+    if [[ "$SCRIPT_PATH" != "$TARGET_PATH" ]]; then
+        if [[ -f "$SCRIPT_PATH" ]]; then
+            install -m 755 "$SCRIPT_PATH" "$TARGET_PATH"
+        else
+            curl -fsSL -o "$TARGET_PATH" "$SOURCE_URL" && chmod 755 "$TARGET_PATH"
+        fi || { error "Failed to deploy $TARGET_PATH"; exit 1; }
+        exec "$TARGET_PATH" setup </dev/tty
+    fi
+    command -v git >/dev/null || dnf -y install git || { error "git installation failed"; exit 1; }
+    load_config
+    user="${CLAUDE_RC_USER:-${cfgServiceUser:-claude}}"
+    if ! id -u "$user" >/dev/null 2>&1; then
+        useradd -m -s /bin/bash "$user" || { error "useradd $user failed"; exit 1; }
+    fi
+    [[ -n "$cfgServiceUser" ]] || echo "serviceUser=$user" >>"$CONFIG_FILE"
+    load_config
+    apply_settings
+    as_user mkdir -p "$DEFAULT_DIR" || { error "Cannot create $DEFAULT_DIR"; exit 1; }
+    if ! as_user bash -lc 'command -v claude' >/dev/null 2>&1; then
+        as_user bash -lc 'curl -fsSL https://claude.ai/install.sh | bash' || { error "Claude Code installation failed"; exit 1; }
+    fi
+    find_claude
+    (check_login) 2>/dev/null || as_user "$claudeBin" auth login
+    check_login
+    resolve "" must_exist
+    if ! is_active; then
+        echo "Answer the trust and Remote Control questions; when the server is running, press Ctrl+C."
+        trap ':' INT
+        as_user bash -lc "exec \"$TARGET_PATH\" init \"$workDir\""
+        trap - INT
+    fi
+    cmd_install ""
+    cmd_status
+}
+
 # Cil: Vytvori systemovou jednotku systemd pro slozku serveru workDir, povoli ji a spusti.
 # Mantinely: Root. Slozka serveru musi existovat. Prepise jen vlastni jednotku unitName; bezici
 #            sluzbu restartuje s novou jednotkou (reinstall). Jednotku jine slozky se stejnym
@@ -624,6 +676,8 @@ cmd_status() {
 }
 
 require_cmds systemctl journalctl runuser timeout hostname getent
+# setup vytvari uzivatele sluzby a config, proto bezi pred apply_settings
+[[ "${1:-}" == "setup" ]] && { cmd_setup; exit; }
 load_config
 apply_settings
 
