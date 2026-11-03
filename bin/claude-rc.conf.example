@@ -1,0 +1,36 @@
+# ============================================================================
+# claude-rc.conf -- nastaveni pro claude-rc.sh (Remote Control server jako sluzba systemd)
+# ============================================================================
+# Pouziti: zkopirovat vedle claude-rc.sh jako claude-rc.conf a upravit.
+#          Jina cesta: promenna CLAUDE_RC_CONFIG (sudo ji vetsinou nepreda).
+# Format:  radky klic=hodnota; komentare #; uvozovky kolem hodnoty volitelne;
+#          ~ nebo $HOME na zacatku cesty = domovska slozka serviceUser. Soubor se nespousti.
+# Poradi:  parametr DIR > promenna prostredi > tento config > vychozi hodnota
+# POZOR:   zmena hostName, unitPrefix nebo serviceUser plati az po "sudo claude-rc.sh install"
+#          (hodnoty se ukladaji do jednotky systemd).
+# ============================================================================
+
+# serverDir: Slozka, nad kterou server bezi (obsahuje workspaces), kdyz prikaz nedostane DIR
+# Duvod: Absolutni cesta, ne primo domovska slozka (pro ni Claude Code duveru neulozi)
+# Prostredi: CLAUDE_RC_DIR
+serverDir=~/Repos
+
+# hostName: Nazev pocitace v seznamu sessions ("<hostName> - <slozka>") a prefix novych sessions
+# Duvod: Vychozi je hostname -s; 1-63 znaku A-Z a-z 0-9 mezera . _ -
+# Prostredi: CLAUDE_RC_HOST
+# Priklad: hostName=rocky
+#hostName=
+
+# unitPrefix: Prefix nazvu jednotky systemd v /etc/systemd/system
+# Duvod: Jednotka sluzby je <unitPrefix>-<nazev slozky>.service; znaky A-Z a-z 0-9 -
+# Prostredi: CLAUDE_RC_UNIT
+# POZOR: Pred zmenou odinstalovat sluzby se starym prefixem (sudo claude-rc.sh uninstall DIR)
+#unitPrefix=claude-rc
+
+# serviceUser: Uzivatel, pod kterym server bezi (User= v jednotce); ne root
+# Duvod: Prihlaseni Claude Code a duvera slozek patri tomuto uzivateli. Vychozi je uzivatel,
+#        ktery skript spustil (pod sudo SUDO_USER). Nutne nastavit, kdyz se install spousti
+#        primo jako root bez sudo.
+# Prostredi: CLAUDE_RC_USER
+# Priklad: serviceUser=claude
+#serviceUser=
