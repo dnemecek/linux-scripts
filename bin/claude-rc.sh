@@ -324,14 +324,15 @@ find_claude() {
 
 # Cil: Overi, ze Claude Code uzivatele sluzby je prihlaseny uctem claude.ai (Remote Control
 #      je k dispozici).
-# Mantinely: Jen cte; bez prihlaseni skonci exit 1 s navodem. Bez platneho prihlaseni claude.ai
-#            vypise --help chybu misto napovedy. --help po vypisu sam neskonci, proto casovy limit
-#            pres timeout a rozhoduje text vystupu, ne navratovy kod. Vyzaduje claudeBin (find_claude).
-# Kontrola: Vystup claude remote-control --help obsahuje USAGE.
+# Mantinely: Jen cte; bez prihlaseni skonci exit 1 s navodem. Rozhoduje "claude auth status"
+#            (JSON) s authMethod "claude.ai": API klic ani token z "claude setup-token" Remote
+#            Control neumi. "remote-control --help" napovedu vypise i bez prihlaseni (2.1.317),
+#            proto se k overeni nehodi. Casovy limit pres timeout. Vyzaduje claudeBin (find_claude).
+# Kontrola: Vystup claude auth status obsahuje "authMethod": "claude.ai".
 check_login() {
-    local helpText
-    helpText=$(as_user timeout 10 "$claudeBin" remote-control --help </dev/null 2>&1)
-    if ! grep -q "USAGE" <<<"$helpText"; then
+    local statusText
+    statusText=$(as_user timeout 10 "$claudeBin" auth status </dev/null 2>&1)
+    if ! grep -q '"authMethod": *"claude.ai"' <<<"$statusText"; then
         error "Remote Control not available: Claude Code of $SERVICE_USER is not logged in with a claude.ai account."
         echo "  As $SERVICE_USER run 'claude auth login' and choose a Claude subscription account" >&2
         echo "  (not Anthropic Console). Tokens from 'claude setup-token' do not work for Remote Control." >&2
