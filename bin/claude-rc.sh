@@ -462,13 +462,15 @@ cmd_run() {
 #            claude. Ctrl+C po initu ukonci jen server (trap), setup pokracuje instalaci sluzby.
 # Kontrola: cmd_install (check_running) a vypis status; jinak exit 1 u kroku, ktery selhal.
 cmd_setup() {
-    local user
+    local user tmp
     require_root setup
     if [[ "$SCRIPT_PATH" != "$TARGET_PATH" ]]; then
         if [[ -f "$SCRIPT_PATH" ]]; then
             install -m 755 "$SCRIPT_PATH" "$TARGET_PATH"
         else
-            curl -fsSL -o "$TARGET_PATH" "$SOURCE_URL" && chmod 755 "$TARGET_PATH"
+            # Do docasneho souboru a mv: prerusene stazeni neprepise funkcni skript sluzby
+            tmp="$(mktemp "${TARGET_PATH}.XXXXXX")" && curl -fsSL -o "$tmp" "$SOURCE_URL" &&
+                chmod 755 "$tmp" && mv -f "$tmp" "$TARGET_PATH" || { rm -f "$tmp"; false; }
         fi || { error "Failed to deploy $TARGET_PATH"; exit 1; }
         exec "$TARGET_PATH" setup </dev/tty
     fi
@@ -478,9 +480,11 @@ cmd_setup() {
     if ! id -u "$user" >/dev/null 2>&1; then
         useradd -m -s /bin/bash "$user" || { error "useradd $user failed"; exit 1; }
     fi
-    [[ -n "$cfgServiceUser" ]] || echo "serviceUser=$user" >>"$CONFIG_FILE"
-    load_config
+    # Do configu az po validaci v apply_settings (ne root, platne jmeno), jinak by tam spatna
+    # hodnota zustala pro dalsi spusteni
+    CLAUDE_RC_USER="$user"
     apply_settings
+    [[ -n "$cfgServiceUser" ]] || echo "serviceUser=$user" >>"$CONFIG_FILE"
     as_user mkdir -p "$DEFAULT_DIR" || { error "Cannot create $DEFAULT_DIR"; exit 1; }
     if ! as_user bash -lc 'command -v claude' >/dev/null 2>&1; then
         as_user bash -lc 'curl -fsSL https://claude.ai/install.sh | bash' || { error "Claude Code installation failed"; exit 1; }
@@ -492,7 +496,8 @@ cmd_setup() {
     if ! is_active; then
         echo "Answer the trust and Remote Control questions; when the server is running, press Ctrl+C."
         trap ':' INT
-        as_user bash -lc "exec \"$TARGET_PATH\" init \"$workDir\""
+        # Cesty jako argumenty, ne v textu prikazu: znaky " $ ` v ceste by bash -lc vykonal
+        as_user bash -lc 'exec "$0" init "$1"' "$TARGET_PATH" "$workDir"
         trap - INT
     fi
     cmd_install ""
